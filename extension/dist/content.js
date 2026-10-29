@@ -416,6 +416,16 @@
       if (this.mode === "stopping") throw stopped();
     }
   };
+  async function pauseAwareSleep(io, session2, ms) {
+    let left = Math.max(0, ms);
+    while (left > 0) {
+      await session2.checkpoint();
+      const slice = Math.min(40, left);
+      await io.sleep(slice);
+      left -= slice;
+    }
+    await session2.checkpoint();
+  }
   function stopped() {
     const error = new Error("stopped");
     error.code = "STOPPED";
@@ -564,7 +574,7 @@
           await io.settle();
           progress += 1;
           hooks.onProgress?.(Math.min(progress, total), total);
-          await io.sleep(keyDelayMs("\n", settings2.minCpm, settings2.maxCpm, rng));
+          await pauseAwareSleep(io, session2, keyDelayMs("\n", settings2.minCpm, settings2.maxCpm, rng));
           await fixIndent(io, indent, settings2.tabSize, session2);
           content = line.slice(indent.length);
         } else if (indent.length > 0) {
@@ -591,15 +601,15 @@
             const snap = io.snapshot();
             const prefix = snap ? snap.line.slice(0, snap.col) : "";
             await typeOne(io, mistake, "", session2);
-            await io.sleep(keyDelayMs(mistake, settings2.minCpm, settings2.maxCpm, rng));
+            await pauseAwareSleep(io, session2, keyDelayMs(mistake, settings2.minCpm, settings2.maxCpm, rng));
             await undoUntil(io, prefix, session2);
-            await io.sleep(Math.max(16, Math.round(keyDelayMs(mistake, settings2.minCpm, settings2.maxCpm, rng) * 0.65)));
+            await pauseAwareSleep(io, session2, Math.max(16, Math.round(keyDelayMs(mistake, settings2.minCpm, settings2.maxCpm, rng) * 0.65)));
           }
           const skip = await typeOne(io, char, upcoming, session2);
           index += skip;
           progress += 1 + skip;
           hooks.onProgress?.(Math.min(progress, total), total);
-          await io.sleep(keyDelayMs(char, settings2.minCpm, settings2.maxCpm, rng));
+          await pauseAwareSleep(io, session2, keyDelayMs(char, settings2.minCpm, settings2.maxCpm, rng));
         }
       }
       return { status: "done" };
@@ -954,7 +964,11 @@
     },
     true
   );
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "session-state") {
+      sendResponse({ mode: session.mode });
+      return;
+    }
     if (message?.type === "command") applyCommand(message.command);
   });
   async function tick(force = false) {
@@ -966,6 +980,7 @@
       if (!response?.ok) return;
       if (response.settings) settings = { ...DEFAULT_SETTINGS, ...response.settings };
       if (Array.isArray(response.snippets)) snippets = response.snippets;
+      if (response.command) applyCommand(response.command);
     } catch {
     }
   }

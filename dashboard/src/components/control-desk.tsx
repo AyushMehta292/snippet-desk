@@ -113,7 +113,7 @@ export function ControlDesk() {
       <div className="stage-head">
         <div>
           <h1>Live control</h1>
-          <p>Start, pause, or end typing in the last field you clicked. The extension keeps that field when this page takes focus.</p>
+          <p>Start, pause, or end typing in the last field you clicked. Ctrl+Shift+Space does the same from the page. On a Mac, use Command+Shift+Space.</p>
         </div>
       </div>
       <div className="control-grid">

@@ -370,7 +370,11 @@ document.addEventListener(
   true,
 );
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "session-state") {
+    sendResponse({ mode: session.mode });
+    return;
+  }
   if (message?.type === "command") applyCommand(message.command);
 });
 
@@ -383,6 +387,7 @@ async function tick(force = false) {
     if (!response?.ok) return;
     if (response.settings) settings = { ...DEFAULT_SETTINGS, ...response.settings };
     if (Array.isArray(response.snippets)) snippets = response.snippets;
+    if (response.command) applyCommand(response.command);
   } catch {
     /* the worker wakes on the next tick */
   }

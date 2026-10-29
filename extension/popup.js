@@ -12,6 +12,7 @@ function showSignedIn(email, base) {
   status.textContent = email ? `Signed in as ${email}` : "Signed in";
   connected.textContent = base ? `Connected to ${base}` : "";
   connected.hidden = !base;
+  document.querySelector("#shortcut").hidden = false;
   form.hidden = true;
   logout.hidden = false;
   passwordInput.value = "";
@@ -21,6 +22,7 @@ function showSignedOut(base, email) {
   status.textContent = "Sign in with the same account as the dashboard.";
   connected.hidden = true;
   connected.textContent = "";
+  document.querySelector("#shortcut").hidden = true;
   form.hidden = false;
   logout.hidden = true;
   if (base) baseInput.value = base;

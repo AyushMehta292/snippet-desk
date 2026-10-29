@@ -1,3 +1,4 @@
+import { commandTarget, normalizeFrame, sameFrame, shouldReplaceLive, toggleAction } from "./control-logic.js";
 import { DEFAULT_SETTINGS } from "./defaults.js";
 
 const DEFAULT_BASE = "http://localhost:3000";
@@ -8,6 +9,8 @@ let email = "";
 let lastSeq = 0;
 let lastFocus = null;
 let activeFrame = null;
+let lastBody = "";
+let snippets = [];
 let notice = "";
 let live = {
   sessionState: "idle",
@@ -16,29 +19,44 @@ let live = {
   progressTotal: 0,
 };
 
-const ready = chrome.storage.local
-  .get(["token", "baseUrl", "email", "lastSeq"])
-  .then((stored) => {
-    token = stored.token || null;
-    baseUrl = (stored.baseUrl || DEFAULT_BASE).replace(/\/$/, "");
-    email = stored.email || "";
-    lastSeq = Number(stored.lastSeq) || 0;
-  });
+const ready = Promise.all([
+  chrome.storage.local.get(["token", "baseUrl", "email", "lastSeq", "lastBody"]),
+  chrome.storage.session.get(["lastFocus", "activeFrame"]),
+]).then(([stored, session]) => {
+  token = stored.token || null;
+  baseUrl = (stored.baseUrl || DEFAULT_BASE).replace(/\/$/, "");
+  email = stored.email || "";
+  lastSeq = Number(stored.lastSeq) || 0;
+  lastBody = stored.lastBody || "";
+  lastFocus = normalizeFrame(session.lastFocus);
+  activeFrame = normalizeFrame(session.activeFrame);
+});
+
+function persistFrames() {
+  return chrome.storage.session.set({ lastFocus, activeFrame });
+}
 
 function api(path) {
   return `${baseUrl}${path}`;
 }
 
-function sameFrame(left, right) {
-  return Boolean(left && right && left.tabId === right.tabId && left.frameId === right.frameId);
+function senderFrame(sender) {
+  if (sender?.tab?.id == null) return null;
+  return normalizeFrame({ tabId: sender.tab.id, frameId: sender.frameId });
 }
 
 async function sync(presence, sender) {
   if (!token) return { ok: false, reason: "signed-out" };
-  const fromActive = sameFrame(activeFrame, { tabId: sender.tab?.id, frameId: sender.frameId });
-  if (fromActive || !activeFrame) {
+  const frame = senderFrame(sender);
+  const presenceState = presence?.sessionState || "idle";
+  if (!activeFrame && (presenceState === "typing" || presenceState === "paused") && frame) {
+    activeFrame = frame;
+    void persistFrames();
+  }
+  const fromActive = sameFrame(activeFrame, frame);
+  if (shouldReplaceLive(fromActive, activeFrame, presenceState)) {
     live = {
-      sessionState: presence?.sessionState || "idle",
+      sessionState: presenceState,
       detail: presence?.detail || "",
       progressIndex: Number(presence?.progressIndex) || 0,
       progressTotal: Number(presence?.progressTotal) || 0,
@@ -85,34 +103,96 @@ async function sync(presence, sender) {
   };
 }
 
-async function deliver(command, seq) {
-  const target = command.action === "start" ? lastFocus : activeFrame;
-  lastSeq = seq;
-  await chrome.storage.local.set({ lastSeq });
-  if (!target?.tabId && target?.tabId !== 0) {
+async function focusTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function deliver(command, sender) {
+  const target = commandTarget(command.action, lastFocus, activeFrame);
+  if (!target) {
     notice = "Click the field you want to type into, then press Start again.";
-    return;
+    return { delivered: false, forSender: null };
   }
   if (command.action === "start") {
-    activeFrame = { tabId: target.tabId, frameId: target.frameId };
-    let tab;
-    try {
-      tab = await chrome.tabs.get(target.tabId);
-    } catch {
+    if (!(await focusTab(target.tabId))) {
       notice = "The field's tab is gone. Click the field again, then press Start.";
       activeFrame = null;
-      return;
+      void persistFrames();
+      return { delivered: false, forSender: null };
     }
-    if (tab.windowId != null) {
-      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    activeFrame = target;
+    if (typeof command.body === "string") {
+      lastBody = command.body;
+      void chrome.storage.local.set({ lastBody });
     }
-    await chrome.tabs.update(target.tabId, { active: true }).catch(() => {});
+    void persistFrames();
+  }
+  if (sameFrame(target, senderFrame(sender))) {
+    return { delivered: true, forSender: command };
   }
   try {
     await chrome.tabs.sendMessage(target.tabId, { type: "command", command }, { frameId: target.frameId });
+    return { delivered: true, forSender: null };
   } catch {
     notice = "Could not reach that field. Refresh the page, click the field, and start again.";
-    if (command.action === "start") activeFrame = null;
+    if (command.action === "start") {
+      activeFrame = null;
+      void persistFrames();
+    }
+    return { delivered: false, forSender: null };
+  }
+}
+
+async function rememberSnippets(next) {
+  if (Array.isArray(next) && next.length > 0) snippets = next;
+}
+
+async function toggleTyping() {
+  await ready;
+  const frame = activeFrame || lastFocus;
+  if (!frame) {
+    notice = "Click a text field first, then press the shortcut again.";
+    return;
+  }
+  let mode = live.sessionState;
+  try {
+    const reply = await chrome.tabs.sendMessage(frame.tabId, { type: "session-state" }, { frameId: frame.frameId });
+    if (reply?.mode) mode = reply.mode;
+  } catch {
+    /* use the last status the frame reported */
+  }
+  const action = toggleAction(mode);
+  if (action === "start") {
+    const body = lastBody || snippets[0]?.body;
+    if (!body) {
+      notice = "Save a snippet before starting from the shortcut.";
+      return;
+    }
+    activeFrame = frame;
+    void persistFrames();
+    if (!(await focusTab(frame.tabId))) return;
+    try {
+      await chrome.tabs.sendMessage(frame.tabId, { type: "command", command: { action: "start", body } }, { frameId: frame.frameId });
+      lastBody = body;
+      live.sessionState = "typing";
+      void chrome.storage.local.set({ lastBody });
+    } catch {
+      notice = "Could not reach that field. Refresh the page and click it again.";
+    }
+    return;
+  }
+  try {
+    await chrome.tabs.sendMessage(frame.tabId, { type: "command", command: { action } }, { frameId: frame.frameId });
+    live.sessionState = action === "pause" ? "paused" : "typing";
+  } catch {
+    notice = "Could not reach the typing field. Click it and try the shortcut again.";
   }
 }
 
@@ -121,16 +201,27 @@ let syncing = Promise.resolve();
 function queueSync(presence, sender) {
   const run = syncing.then(async () => {
     const data = await sync(presence, sender);
+    let commandForSender = null;
     if (data.ok && data.seq > lastSeq) {
-      lastSeq = data.seq;
-      await chrome.storage.local.set({ lastSeq });
-      if (data.command) await deliver(data.command, data.seq);
+      if (data.command) {
+        const result = await deliver(data.command, sender);
+        commandForSender = result.forSender;
+        if (result.delivered) {
+          lastSeq = data.seq;
+          await chrome.storage.local.set({ lastSeq });
+        }
+      } else {
+        lastSeq = data.seq;
+        await chrome.storage.local.set({ lastSeq });
+      }
     }
+    if (data.ok) void rememberSnippets(data.snippets);
     return {
       ok: data.ok,
       reason: data.reason,
       snippets: data.snippets,
       settings: data.settings,
+      command: commandForSender,
     };
   });
   syncing = run.then(
@@ -194,12 +285,10 @@ async function handle(message, sender) {
   }
   if (message?.type === "focus") {
     if (sender.tab?.id == null) return { ok: false };
-    lastFocus = {
-      tabId: sender.tab.id,
-      frameId: sender.frameId,
-      fieldKind: message.fieldKind || "field",
-      host: message.host || "",
-    };
+    lastFocus = normalizeFrame({ tabId: sender.tab.id, frameId: sender.frameId });
+    lastFocus.fieldKind = message.fieldKind || "field";
+    lastFocus.host = message.host || "";
+    void persistFrames();
     return { ok: true };
   }
   if (message?.type === "tick") {
@@ -207,3 +296,7 @@ async function handle(message, sender) {
   }
   return { ok: false };
 }
+
+chrome.commands.onCommand.addListener((name) => {
+  if (name === "toggle-typing") void toggleTyping();
+});

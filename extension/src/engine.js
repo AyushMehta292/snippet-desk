@@ -49,6 +49,17 @@ export class TypingSession {
   }
 }
 
+async function pauseAwareSleep(io, session, ms) {
+  let left = Math.max(0, ms);
+  while (left > 0) {
+    await session.checkpoint();
+    const slice = Math.min(40, left);
+    await io.sleep(slice);
+    left -= slice;
+  }
+  await session.checkpoint();
+}
+
 function stopped() {
   const error = new Error("stopped");
   error.code = "STOPPED";
@@ -207,7 +218,7 @@ export async function typeSnippet(body, io, settings, session, hooks = {}) {
         await io.settle();
         progress += 1;
         hooks.onProgress?.(Math.min(progress, total), total);
-        await io.sleep(keyDelayMs("\n", settings.minCpm, settings.maxCpm, rng));
+        await pauseAwareSleep(io, session, keyDelayMs("\n", settings.minCpm, settings.maxCpm, rng));
         await fixIndent(io, indent, settings.tabSize, session);
         content = line.slice(indent.length);
       } else if (indent.length > 0) {
@@ -236,16 +247,16 @@ export async function typeSnippet(body, io, settings, session, hooks = {}) {
           const snap = io.snapshot();
           const prefix = snap ? snap.line.slice(0, snap.col) : "";
           await typeOne(io, mistake, "", session);
-          await io.sleep(keyDelayMs(mistake, settings.minCpm, settings.maxCpm, rng));
+          await pauseAwareSleep(io, session, keyDelayMs(mistake, settings.minCpm, settings.maxCpm, rng));
           await undoUntil(io, prefix, session);
-          await io.sleep(Math.max(16, Math.round(keyDelayMs(mistake, settings.minCpm, settings.maxCpm, rng) * 0.65)));
+          await pauseAwareSleep(io, session, Math.max(16, Math.round(keyDelayMs(mistake, settings.minCpm, settings.maxCpm, rng) * 0.65)));
         }
 
         const skip = await typeOne(io, char, upcoming, session);
         index += skip;
         progress += 1 + skip;
         hooks.onProgress?.(Math.min(progress, total), total);
-        await io.sleep(keyDelayMs(char, settings.minCpm, settings.maxCpm, rng));
+        await pauseAwareSleep(io, session, keyDelayMs(char, settings.minCpm, settings.maxCpm, rng));
       }
     }
     return { status: "done" };

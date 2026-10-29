@@ -45,3 +45,4 @@ next-env.d.ts
 /data/*.db
 /data/*.db-*
 /data/*.db-journal
+.env*.local

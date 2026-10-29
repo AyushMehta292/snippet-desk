@@ -1,13 +1,13 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { neon } from "@neondatabase/serverless";
 
-type Sql = NeonQueryFunction<false, false>;
+type Query = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 
-const globalForDb = globalThis as unknown as { snippetSql?: Promise<Sql> };
+const globalForDb = globalThis as unknown as { snippetSql?: Promise<Query> };
 
 function databaseUrl() {
   const url = process.env.DATABASE_URL;
   if (!url) {
-    throw new Error("DATABASE_URL is not set. Add Neon in the Vercel project, then use that connection string locally.");
+    throw new Error("DATABASE_URL is not set. Add the Neon connection string from the Vercel project.");
   }
   return url;
 }
@@ -75,7 +75,7 @@ async function openDatabase() {
       progress_total INTEGER NOT NULL
     )
   `;
-  return sql;
+  return (async (strings, ...values) => sql(strings, ...values)) as Query;
 }
 
 export async function sql() {
