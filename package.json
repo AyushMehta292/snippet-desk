@@ -1,0 +1,14 @@
+{
+  "name": "rea-snippets-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --prefix dashboard",
+    "test": "node --test extension/src/*.test.mjs",
+    "build:extension": "node extension/build.mjs",
+    "lint": "npm run lint --prefix dashboard"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.11"
+  }
+}

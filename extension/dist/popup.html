@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Snippet Desk</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Snippet Desk</h1>
+      <p id="status">Checking the dashboard…</p>
+      <p id="connected" hidden></p>
+      <form id="login">
+        <label>Dashboard<input id="base" type="url" required value="http://localhost:3000" /></label>
+        <label>Email<input id="email" type="email" required autocomplete="username" /></label>
+        <label>Password<input id="password" type="password" required autocomplete="current-password" /></label>
+        <p id="error"></p>
+        <button id="submit" type="submit">Sign in</button>
+      </form>
+      <button id="logout" type="button" hidden>Sign out</button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
