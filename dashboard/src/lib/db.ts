@@ -1,89 +1,97 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 
-const globalForDb = globalThis as unknown as { snippetDb?: DatabaseSync };
+type Sql = NeonQueryFunction<false, false>;
 
-function openDatabase() {
-  const directory = path.join(process.cwd(), "data");
-  mkdirSync(directory, { recursive: true });
-  const db = new DatabaseSync(path.join(directory, "snippets.db"));
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
+const globalForDb = globalThis as unknown as { snippetSql?: Promise<Sql> };
 
+function databaseUrl() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error("DATABASE_URL is not set. Add Neon in the Vercel project, then use that connection string locally.");
+  }
+  return url;
+}
+
+async function openDatabase() {
+  const sql = neon(databaseUrl());
+  await sql`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS snippets (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       shortcut TEXT NOT NULL,
       body TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE (user_id, shortcut),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE (user_id, shortcut)
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS settings (
-      user_id TEXT PRIMARY KEY,
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       min_cpm INTEGER NOT NULL,
       max_cpm INTEGER NOT NULL,
-      min_mistake_per_100 REAL NOT NULL,
-      max_mistake_per_100 REAL NOT NULL,
+      min_mistake_per_100 DOUBLE PRECISION NOT NULL,
+      max_mistake_per_100 DOUBLE PRECISION NOT NULL,
       tab_size INTEGER NOT NULL,
-      expand_trigger TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
+      expand_trigger TEXT NOT NULL
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS agent_commands (
-      user_id TEXT PRIMARY KEY,
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       seq INTEGER NOT NULL,
       action TEXT NOT NULL,
       snippet_id TEXT,
       body TEXT,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS agent_status (
-      user_id TEXT PRIMARY KEY,
-      last_seen INTEGER NOT NULL,
-      focused INTEGER NOT NULL,
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      last_seen BIGINT NOT NULL,
+      focused BOOLEAN NOT NULL,
       field_kind TEXT NOT NULL,
       host TEXT NOT NULL,
       session_state TEXT NOT NULL,
       detail TEXT NOT NULL,
       progress_index INTEGER NOT NULL,
-      progress_total INTEGER NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-  `);
-  return db;
+      progress_total INTEGER NOT NULL
+    )
+  `;
+  return sql;
 }
 
-export function db() {
-  if (!globalForDb.snippetDb) globalForDb.snippetDb = openDatabase();
-  return globalForDb.snippetDb;
+export async function sql() {
+  if (!globalForDb.snippetSql) {
+    globalForDb.snippetSql = openDatabase().catch((error: unknown) => {
+      globalForDb.snippetSql = undefined;
+      throw error;
+    });
+  }
+  return globalForDb.snippetSql;
 }
 
 export function isUniqueConstraint(error: unknown) {
   const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   const message = error instanceof Error ? error.message : "";
-  return code.startsWith("SQLITE_CONSTRAINT") || message.includes("UNIQUE constraint failed");
+  return code === "23505" || message.includes("duplicate key") || message.includes("UNIQUE constraint failed");
 }
 
 export type UserRow = {
@@ -125,7 +133,7 @@ export type CommandRow = {
 export type StatusRow = {
   user_id: string;
   last_seen: number;
-  focused: number;
+  focused: boolean;
   field_kind: string;
   host: string;
   session_state: string;

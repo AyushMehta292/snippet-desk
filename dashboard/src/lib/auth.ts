@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { db, type UserRow } from "./db";
+import { sql, type UserRow } from "./db";
 
 const SESSION_COOKIE = "session";
 
@@ -19,12 +19,11 @@ export function verifyPassword(password: string, stored: string) {
   return timingSafeEqual(actual, expected);
 }
 
-export function createSession(userId: string) {
+export async function createSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  db()
-    .prepare("INSERT INTO sessions (token_hash, user_id, created_at) VALUES (?, ?, ?)")
-    .run(tokenHash, userId, Date.now());
+  const db = await sql();
+  await db`INSERT INTO sessions (token_hash, user_id, created_at) VALUES (${tokenHash}, ${userId}, ${Date.now()})`;
   return token;
 }
 
@@ -44,23 +43,23 @@ export async function clearSessionCookie() {
   jar.delete(SESSION_COOKIE);
 }
 
-export function userForToken(token: string | undefined | null) {
+export async function userForToken(token: string | undefined | null) {
   if (!token) return null;
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  const row = db()
-    .prepare(
-      `SELECT users.id, users.email, users.password_hash, users.created_at
-       FROM sessions JOIN users ON users.id = sessions.user_id
-       WHERE sessions.token_hash = ?`,
-    )
-    .get(tokenHash) as UserRow | undefined;
-  return row ?? null;
+  const db = await sql();
+  const rows = await db`
+    SELECT users.id, users.email, users.password_hash, users.created_at
+    FROM sessions JOIN users ON users.id = sessions.user_id
+    WHERE sessions.token_hash = ${tokenHash}
+  `;
+  return (rows[0] as UserRow | undefined) ?? null;
 }
 
-export function deleteToken(token: string | undefined | null) {
+export async function deleteToken(token: string | undefined | null) {
   if (!token) return;
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  db().prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
+  const db = await sql();
+  await db`DELETE FROM sessions WHERE token_hash = ${tokenHash}`;
 }
 
 export async function getCurrentUser() {

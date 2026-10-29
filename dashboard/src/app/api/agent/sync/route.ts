@@ -1,5 +1,5 @@
 import { getUserFromRequest } from "@/lib/auth";
-import { db, type CommandRow } from "@/lib/db";
+import { sql, type CommandRow } from "@/lib/db";
 import { getSettings, listSnippets, readJson } from "@/lib/snippets";
 
 export const runtime = "nodejs";
@@ -29,35 +29,38 @@ export async function POST(request: Request) {
   const progressIndex = Number(status.progressIndex) || 0;
   const progressTotal = Number(status.progressTotal) || 0;
 
-  db()
-    .prepare(
-      `INSERT INTO agent_status (
-         user_id, last_seen, focused, field_kind, host, session_state, detail, progress_index, progress_total
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
-         last_seen = excluded.last_seen,
-         focused = excluded.focused,
-         field_kind = excluded.field_kind,
-         host = excluded.host,
-         session_state = excluded.session_state,
-         detail = excluded.detail,
-         progress_index = excluded.progress_index,
-         progress_total = excluded.progress_total`,
+  const db = await sql();
+  await db`
+    INSERT INTO agent_status (
+      user_id, last_seen, focused, field_kind, host, session_state, detail, progress_index, progress_total
+    ) VALUES (
+      ${user.id}, ${now}, ${Boolean(status.focused)}, ${fieldKind}, ${host}, ${sessionState}, ${detail}, ${progressIndex}, ${progressTotal}
     )
-    .run(user.id, now, status.focused ? 1 : 0, fieldKind, host, sessionState, detail, progressIndex, progressTotal);
+    ON CONFLICT(user_id) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      focused = excluded.focused,
+      field_kind = excluded.field_kind,
+      host = excluded.host,
+      session_state = excluded.session_state,
+      detail = excluded.detail,
+      progress_index = excluded.progress_index,
+      progress_total = excluded.progress_total
+  `;
 
-  const command = db()
-    .prepare("SELECT user_id, seq, action, snippet_id, body, created_at FROM agent_commands WHERE user_id = ?")
-    .get(user.id) as CommandRow | undefined;
-  const fresh = Boolean(command && now - command.created_at < 15_000);
+  const commands = await db`
+    SELECT user_id, seq, action, snippet_id, body, created_at FROM agent_commands WHERE user_id = ${user.id}
+  `;
+  const command = commands[0] as CommandRow | undefined;
+  const fresh = Boolean(command && now - Number(command.created_at) < 15_000);
+  const seq = Number(command?.seq) || 0;
 
   return Response.json({
-    seq: command?.seq ?? 0,
+    seq,
     command:
-      command && fresh && lastSeq < command.seq
+      command && fresh && lastSeq < seq
         ? { action: command.action, snippetId: command.snippet_id, body: command.body }
         : null,
-    snippets: listSnippets(user.id),
-    settings: getSettings(user.id),
+    snippets: await listSnippets(user.id),
+    settings: await getSettings(user.id),
   });
 }

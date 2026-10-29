@@ -129,7 +129,7 @@ export function SettingsForm() {
             <li>From the project folder, run <code>npm run build:extension</code>.</li>
             <li>Open <code>chrome://extensions</code>, turn on Developer mode, and choose Load unpacked.</li>
             <li>Select the <code>extension/dist</code> folder.</li>
-            <li>Open the extension popup and sign in with the same account. Set the dashboard address to the URL printed when you start it, usually <code>http://localhost:3000</code>.</li>
+            <li>Open the extension popup and sign in with the same account. Set the dashboard address to this site, for example <code>http://localhost:3000</code> or the Vercel URL.</li>
             <li>Refresh any tab you want to type into. Typing goes through the page editor, so indentation and completions still apply, and Chrome does not show a debugging banner.</li>
           </ol>
         </section>

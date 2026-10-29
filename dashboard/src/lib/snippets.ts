@@ -1,4 +1,4 @@
-import { db, type SettingsRow, type SnippetRow } from "./db";
+import { sql, type SettingsRow, type SnippetRow } from "./db";
 import { settingsFromRow, type Settings } from "./validators";
 
 export type PublicSnippet = {
@@ -21,22 +21,25 @@ export function toPublicSnippet(row: SnippetRow): PublicSnippet {
   };
 }
 
-export function listSnippets(userId: string) {
-  const rows = db()
-    .prepare(
-      "SELECT id, user_id, name, shortcut, body, created_at, updated_at FROM snippets WHERE user_id = ? ORDER BY updated_at DESC",
-    )
-    .all(userId) as SnippetRow[];
-  return rows.map(toPublicSnippet);
+export async function listSnippets(userId: string) {
+  const db = await sql();
+  const rows = await db`
+    SELECT id, user_id, name, shortcut, body, created_at, updated_at
+    FROM snippets
+    WHERE user_id = ${userId}
+    ORDER BY updated_at DESC
+  `;
+  return (rows as SnippetRow[]).map(toPublicSnippet);
 }
 
-export function getSettings(userId: string): Settings {
-  const row = db()
-    .prepare(
-      "SELECT user_id, min_cpm, max_cpm, min_mistake_per_100, max_mistake_per_100, tab_size, expand_trigger FROM settings WHERE user_id = ?",
-    )
-    .get(userId) as SettingsRow | undefined;
-  return settingsFromRow(row);
+export async function getSettings(userId: string): Promise<Settings> {
+  const db = await sql();
+  const rows = await db`
+    SELECT user_id, min_cpm, max_cpm, min_mistake_per_100, max_mistake_per_100, tab_size, expand_trigger
+    FROM settings
+    WHERE user_id = ${userId}
+  `;
+  return settingsFromRow(rows[0] as SettingsRow | undefined);
 }
 
 export async function readJson(request: Request) {
